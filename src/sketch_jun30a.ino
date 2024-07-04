@@ -3,17 +3,24 @@
 #include <esp_system.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <dht.h>
+#include <Adafruit_Sensor.h>
+
+#define DHTTYPE DHT22 
+#define DHTPIN 23
+
+DHT dht(DHTPIN, DHTTYPE);
 
 const char* ssid = "Bannok Kiang Chan3";
 const char* password = "0818462519";
 
 int push_button_state = 0;
-int celsius = 0;
+int celsius;
 
+// // init pin // //
 int pin_out_led_red = 33;
 int push_button_pin = 32;
 int pin_out_led_blue = 2;
-int pin_in_temp = 35;
 int pin_in_water = 34;
 
 // test sub mosquitto_sub -h 192.168.1.43 -p 1883 -t sensor/temperature // 
@@ -26,7 +33,8 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 
 struct SensorData {
-  int temp;
+  float temp;
+  float humid;
   int water;
 };
 
@@ -63,21 +71,31 @@ void mqtt_reconn(){
 
 SensorData operate_fucntion(){
   SensorData setData;
-  celsius = map(((analogRead(pin_in_temp) - 20) * 3.04), 0, 1023, -40, 125);
-  Serial.print("Water level: ");
-  Serial.println(analogRead(pin_in_water));
-  Serial.print("Celsius: ");
-  Serial.println(celsius);
+  float humid = dht.readHumidity();
+  float celsius = dht.readTemperature();
+
+  // // deug logs // //
+  // Serial.print("Water level: ");
+  // Serial.println(analogRead(pin_in_water));
+  // Serial.print("Celsius: ");
+  // Serial.println(celsius);
+  // Serial.print("Humid: ");
+  // Serial.println(humid);
+
   setData.temp = celsius;
+  setData.humid = humid;
   setData.water = analogRead(pin_in_water);
   return setData;
 }
 
-String createJson(int temp, int water){
+String createJson(float temp, int water, float humid){
   StaticJsonDocument<200> doc;
+  String jsonString;
+
   doc["temp"] = temp;
   doc["water"] = water;
-  String jsonString;
+  doc["humid"] = humid;
+
   serializeJson(doc, jsonString);
   return jsonString;
 }
@@ -85,11 +103,7 @@ String createJson(int temp, int water){
 void callback(char* topic, byte* payload, unsigned int length) {
   StaticJsonDocument<200> command;
   String  commandOut;
-  // Serial.print("Message arrived [");
-  // Serial.print(topic);
-  // Serial.print("] ");
   for (unsigned int i = 0; i < length; i++) {
-    // Serial.print((char)payload[i]);
     commandOut = commandOut + (char)payload[i];
   }
   DeserializationError error = deserializeJson(command, commandOut);
@@ -99,8 +113,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
     return;
   }
   int isC = command["command"];
-  Serial.print("Message arrived command: ");
-  Serial.println(isC);
+  // // deug logs // //
+  // Serial.print("Message arrived command: ");
+  // Serial.println(isC);
   if (isC == 1){
     digitalWrite(pin_out_led_red, HIGH);
   }else if (isC == 0){
@@ -113,11 +128,11 @@ void setup() {
   pinMode(pin_out_led_blue, OUTPUT);
   pinMode(push_button_pin, INPUT);
   pinMode(pin_in_water,INPUT);
-  pinMode(pin_in_temp,INPUT);
   Serial.begin(115200);
   wifi_connection();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
+  dht.begin();
 }
 
 void loop() {
@@ -128,11 +143,12 @@ void loop() {
   client.loop();
   SensorData dataout = operate_fucntion();
   push_button_state = digitalRead(push_button_pin);
-  Serial.print("btn: ");
-  Serial.print(push_button_state);
-  Serial.println("");
+  // // deug logs // //
+  // Serial.print("btn: ");
+  // Serial.print(push_button_state);
+  // Serial.println("");
   if (push_button_state == 1){
-    String jsonData = createJson(dataout.temp, dataout.water);
+    String jsonData = createJson(dataout.temp, dataout.water, dataout.humid);
     client.publish(mqtt_topic, jsonData.c_str());
   }
   delay(2000);
